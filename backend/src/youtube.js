@@ -116,6 +116,12 @@ export async function searchYoutubeVideos(query, limit = 12) {
     videoId: video.id,
     title: video.snippet?.title || "Untitled",
     url: `https://www.youtube.com/watch?v=${video.id}`,
+    embedUrl: `https://www.youtube.com/embed/${video.id}`,
+    thumbnailUrl:
+      video.snippet?.thumbnails?.high?.url ||
+      video.snippet?.thumbnails?.medium?.url ||
+      video.snippet?.thumbnails?.default?.url ||
+      "",
     duration: formatIso8601Duration(video.contentDetails?.duration),
     views: formatViewCount(video.statistics?.viewCount),
     author: video.snippet?.channelTitle || "Unknown",

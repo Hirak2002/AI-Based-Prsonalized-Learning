@@ -45,14 +45,21 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, service: "IQ Video Recommender API" });
+  res.json({
+    ok: true,
+    service: "IQ Video Recommender API",
+    youtubeApiConfigured: Boolean(process.env.YOUTUBE_API_KEY),
+    searchProvider: "youtube-data-api-v3"
+  });
 });
 
 app.post("/api/recommendations", async (req, res) => {
   try {
     if (!process.env.YOUTUBE_API_KEY) {
       return res.status(500).json({
-        message: "Missing YOUTUBE_API_KEY. Add it before requesting recommendations."
+        message: "Missing YOUTUBE_API_KEY. Add it before requesting recommendations.",
+        youtubeApiConfigured: false,
+        searchProvider: "youtube-data-api-v3"
       });
     }
 
@@ -131,6 +138,8 @@ app.post("/api/recommendations", async (req, res) => {
       .slice(0, 8);
 
     return res.json({
+      youtubeApiConfigured: true,
+      searchProvider: "youtube-data-api-v3",
       student: {
         name: studentName || "Student",
         iq,
