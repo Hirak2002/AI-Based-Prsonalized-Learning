@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import {
@@ -49,6 +50,12 @@ app.get("/api/health", (_req, res) => {
 
 app.post("/api/recommendations", async (req, res) => {
   try {
+    if (!process.env.YOUTUBE_API_KEY) {
+      return res.status(500).json({
+        message: "Missing YOUTUBE_API_KEY. Add it before requesting recommendations."
+      });
+    }
+
     const {
       studentName,
       iqScore,
