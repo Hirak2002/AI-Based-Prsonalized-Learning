@@ -5,8 +5,6 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 
 const initialForm = {
   studentName: '',
-  iqScore: '',
-  eqScore: '',
   topic: '',
   currentLevel: 'Beginner',
   learningGoal: '',
@@ -16,8 +14,15 @@ const initialForm = {
 function App() {
   const [form, setForm] = useState(initialForm)
   const [loading, setLoading] = useState(false)
+  const [questionLoading, setQuestionLoading] = useState(false)
   const [error, setError] = useState('')
   const [response, setResponse] = useState(null)
+  const [assessment, setAssessment] = useState({
+    assessmentId: '',
+    source: '',
+    questions: [],
+    answers: {},
+  })
   const [apiStatus, setApiStatus] = useState({
     loading: true,
     configured: false,
@@ -35,6 +40,11 @@ function App() {
     const fallback = items.filter((item) => item.analysisSource === 'metadata-fallback').length
     return { transcript, fallback, total: items.length }
   }, [response])
+
+  const answeredQuestions = useMemo(
+    () => Object.keys(assessment.answers).length,
+    [assessment.answers],
+  )
 
   useEffect(() => {
     let mounted = true
@@ -72,10 +82,76 @@ function App() {
   const handleChange = (event) => {
     const { name, value } = event.target
     setForm((prev) => ({ ...prev, [name]: value }))
+
+    if (name === 'topic' || name === 'currentLevel' || name === 'learningGoal') {
+      setAssessment({ assessmentId: '', source: '', questions: [], answers: {} })
+    }
+  }
+
+  const handleAnswerChange = (questionId, optionId) => {
+    setAssessment((prev) => ({
+      ...prev,
+      answers: {
+        ...prev.answers,
+        [questionId]: optionId,
+      },
+    }))
+  }
+
+  const generateQuestions = async () => {
+    if (!form.topic || !form.learningGoal) {
+      setError('Please enter topic and learning goal before generating questions.')
+      return
+    }
+
+    setQuestionLoading(true)
+    setError('')
+    setResponse(null)
+
+    try {
+      const result = await fetch(`${API_BASE}/api/assessment/questions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: form.topic,
+          currentLevel: form.currentLevel,
+          learningGoal: form.learningGoal,
+        }),
+      })
+
+      const data = await result.json()
+
+      if (!result.ok) {
+        throw new Error(data.message || 'Could not generate assessment questions.')
+      }
+
+      setAssessment({
+        assessmentId: data.assessmentId,
+        source: data.source,
+        questions: data.questions || [],
+        answers: {},
+      })
+    } catch (questionError) {
+      setAssessment({ assessmentId: '', source: '', questions: [], answers: {} })
+      setError(questionError.message)
+    } finally {
+      setQuestionLoading(false)
+    }
   }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
+
+    if (!assessment.assessmentId || !assessment.questions.length) {
+      setError('Generate and answer assessment questions before requesting recommendations.')
+      return
+    }
+
+    if (answeredQuestions < assessment.questions.length) {
+      setError('Please answer all assessment questions before submitting.')
+      return
+    }
+
     setLoading(true)
     setError('')
 
@@ -86,7 +162,13 @@ function App() {
       const result = await fetch(`${API_BASE}/api/recommendations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          assessmentId: assessment.assessmentId,
+          assessmentResponses: Object.entries(assessment.answers).map(
+            ([questionId, optionId]) => ({ questionId, optionId }),
+          ),
+        }),
         signal: controller.signal,
       })
 
@@ -131,10 +213,9 @@ function App() {
           <p className="eyebrow">Personalized YouTube Learning Engine</p>
           <h1>{headline}</h1>
           <p className="sub">
-            Enter student details, IQ and EQ scores, and learning goal. The system
-            computes student ability score using 0.7 x IQ + 0.3 x EQ, searches
-            YouTube, extracts transcripts, runs Flesch reading-based difficulty
-            analysis, and ranks videos by match.
+            Enter your learning profile, answer a focused AI-generated assessment,
+            and the platform will estimate IQ and EQ automatically before ranking
+            YouTube recommendations.
           </p>
 
           <div className="api-diff-panel">
@@ -156,6 +237,10 @@ function App() {
                 <span className="diff-label">Metadata fallback</span>
                 <strong>{sourceSummary.fallback}</strong>
               </div>
+              <div>
+                <span className="diff-label">Assessment Progress</span>
+                <strong>{answeredQuestions}/{assessment.questions.length || 0}</strong>
+              </div>
             </div>
           </div>
         </header>
@@ -169,34 +254,6 @@ function App() {
                 name="studentName"
                 placeholder="Aarav Sharma"
                 value={form.studentName}
-                onChange={handleChange}
-              />
-            </label>
-
-            <label>
-              IQ Score (50-180) *
-              <input
-                name="iqScore"
-                type="number"
-                min="50"
-                max="180"
-                required
-                placeholder="110"
-                value={form.iqScore}
-                onChange={handleChange}
-              />
-            </label>
-
-            <label>
-              EQ Score (50-180) *
-              <input
-                name="eqScore"
-                type="number"
-                min="50"
-                max="180"
-                required
-                placeholder="105"
-                value={form.eqScore}
                 onChange={handleChange}
               />
             </label>
@@ -249,11 +306,48 @@ function App() {
               </select>
             </label>
 
+            <button type="button" onClick={generateQuestions} disabled={questionLoading}>
+              {questionLoading ? 'Generating Questions...' : 'Generate AI Assessment Questions'}
+            </button>
+
             <button type="submit" disabled={loading}>
-              {loading ? 'Analyzing Transcripts...' : 'Get Smart Recommendations'}
+              {loading ? 'Analyzing Profile...' : 'Evaluate & Get Recommendations'}
             </button>
           </form>
           {error ? <p className="error-banner">{error}</p> : null}
+
+          {assessment.questions.length ? (
+            <div className="assessment-panel">
+              <h3>Targeted Assessment (Auto IQ/EQ)</h3>
+              <p>
+                Source: <strong>{assessment.source || 'ai-generated-assessment'}</strong>
+              </p>
+              <div className="assessment-list">
+                {assessment.questions.map((question, index) => (
+                  <article key={question.id} className="question-card">
+                    <p className="question-title">
+                      Q{index + 1}. {question.prompt}
+                    </p>
+                    <p className="question-dimension">{question.dimension}</p>
+                    <div className="question-options">
+                      {question.options.map((option) => (
+                        <label key={option.id}>
+                          <input
+                            type="radio"
+                            name={question.id}
+                            value={option.id}
+                            checked={assessment.answers[question.id] === option.id}
+                            onChange={() => handleAnswerChange(question.id, option.id)}
+                          />
+                          <span>{option.text}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel result-panel">
@@ -263,8 +357,9 @@ function App() {
               <p>
                 Query: <strong>{response.searchQuery}</strong> | Transcript analyzed:{' '}
                 <strong>{response.analyzedWithTranscript}</strong> | Ability Score:{' '}
-                <strong>{response.student.abilityScore}</strong> | Search Provider:{' '}
-                <strong>{response.searchProvider || 'unknown'}</strong>
+                <strong>{response.student.abilityScore}</strong> | IQ/EQ:{' '}
+                <strong>{response.student.iq}/{response.student.eq}</strong> | Assessment:{' '}
+                <strong>{response.student.assessment?.answeredCount || 0}/{response.student.assessment?.totalQuestions || 0}</strong>
               </p>
             ) : (
               <p>Submit the form to see personalized video recommendations.</p>
@@ -308,8 +403,8 @@ function App() {
             ) : (
               <div className="empty-state">
                 <p>
-                  No recommendations yet. Fill the form and click "Get Smart
-                  Recommendations".
+                  No recommendations yet. Fill profile, generate assessment,
+                  answer questions, then click "Evaluate & Get Recommendations".
                 </p>
               </div>
             )}

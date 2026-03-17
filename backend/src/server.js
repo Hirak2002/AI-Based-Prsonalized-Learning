@@ -6,6 +6,7 @@ import {
   calculateStudentAbilityScore,
   classifyDifficulty
 } from "./difficulty.js";
+import { createAssessment, evaluateAssessment } from "./assessment.js";
 import { fetchTranscriptForVideo, searchYoutubeVideos } from "./youtube.js";
 
 const app = express();
@@ -41,6 +42,17 @@ function buildFallbackText(video, topic, learningGoal, currentLevel) {
     .join(". ");
 }
 
+function parseAssessmentResponses(rawResponses) {
+  if (!Array.isArray(rawResponses)) return [];
+
+  return rawResponses
+    .map((item) => ({
+      questionId: item?.questionId,
+      optionId: item?.optionId
+    }))
+    .filter((item) => item.questionId && item.optionId);
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -50,6 +62,28 @@ app.get("/api/health", (_req, res) => {
     service: "IQ Video Recommender API",
     youtubeApiConfigured: Boolean(process.env.YOUTUBE_API_KEY),
     searchProvider: "youtube-data-api-v3"
+  });
+});
+
+app.post("/api/assessment/questions", (req, res) => {
+  const { topic, learningGoal, currentLevel } = req.body;
+
+  if (!topic || !learningGoal) {
+    return res.status(400).json({
+      message: "topic and learningGoal are required to generate assessment questions."
+    });
+  }
+
+  const assessment = createAssessment({
+    topic,
+    learningGoal,
+    currentLevel: currentLevel || "Beginner"
+  });
+
+  return res.json({
+    ...assessment,
+    instructions:
+      "Answer all questions. IQ and EQ scores will be calculated automatically from your responses."
   });
 });
 
@@ -65,32 +99,28 @@ app.post("/api/recommendations", async (req, res) => {
 
     const {
       studentName,
-      iqScore,
-      eqScore,
+      assessmentId,
+      assessmentResponses,
       topic,
       currentLevel,
       learningGoal,
       preferredDuration
     } = req.body;
 
-    if (!iqScore || !eqScore || !topic || !learningGoal) {
+    if (!assessmentId || !topic || !learningGoal) {
       return res.status(400).json({
-        message: "iqScore, eqScore, topic, and learningGoal are required."
+        message: "assessmentId, topic, and learningGoal are required."
       });
     }
 
-    const iq = Number(iqScore);
-    const eq = Number(eqScore);
+    const responses = parseAssessmentResponses(assessmentResponses);
+    const assessmentResult = evaluateAssessment(assessmentId, responses);
+    const iq = assessmentResult.iqScore;
+    const eq = assessmentResult.eqScore;
 
-    if (!isValidScore(iq)) {
+    if (!isValidScore(iq) || !isValidScore(eq)) {
       return res.status(400).json({
-        message: `iqScore must be a number between ${MIN_SCORE} and ${MAX_SCORE}.`
-      });
-    }
-
-    if (!isValidScore(eq)) {
-      return res.status(400).json({
-        message: `eqScore must be a number between ${MIN_SCORE} and ${MAX_SCORE}.`
+        message: "Computed IQ/EQ scores are out of expected range. Retake assessment."
       });
     }
 
@@ -146,6 +176,7 @@ app.post("/api/recommendations", async (req, res) => {
         eq,
         abilityScore: studentAbilityScore,
         abilityFormula: "0.7 * IQ + 0.3 * EQ",
+        assessment: assessmentResult,
         topic,
         currentLevel,
         learningGoal
