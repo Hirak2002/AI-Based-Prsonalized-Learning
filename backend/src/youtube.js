@@ -4,6 +4,7 @@ const SEARCH_TIMEOUT_MS = 5000;
 const TRANSCRIPT_TIMEOUT_MS = 3500;
 const MIN_TRANSCRIPT_CHARS = 120;
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
+const SHORT_VIDEO_MAX_SECONDS = 15 * 60;
 
 function withTimeout(promise, timeoutMs, fallbackValue = null) {
   return Promise.race([
@@ -50,6 +51,45 @@ function formatIso8601Duration(isoValue) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function parseIso8601DurationToSeconds(isoValue) {
+  if (!isoValue || typeof isoValue !== "string") return null;
+
+  const match = isoValue.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return null;
+
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function toYoutubeDurationParam(preferredDuration) {
+  if (preferredDuration === "short") return "short";
+  if (preferredDuration === "long") return "long";
+  return "any";
+}
+
+export function isVideoDurationMatch(preferredDuration, durationSeconds) {
+  if (!preferredDuration || preferredDuration === "any") {
+    return true;
+  }
+
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return false;
+  }
+
+  if (preferredDuration === "short") {
+    return durationSeconds <= SHORT_VIDEO_MAX_SECONDS;
+  }
+
+  if (preferredDuration === "long") {
+    return durationSeconds >= SHORT_VIDEO_MAX_SECONDS;
+  }
+
+  return true;
+}
+
 function normalizeDescription(description) {
   if (!description) return "";
   if (typeof description === "string") return description;
@@ -62,18 +102,22 @@ function normalizeDescription(description) {
   return "";
 }
 
-export async function searchYoutubeVideos(query, limit = 12) {
+export async function searchYoutubeVideos(query, options = {}) {
+  const { limit = 12, preferredDuration = "any" } = options;
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) {
     return [];
   }
+
+  const normalizedLimit = Math.max(Number(limit) || 12, 5);
 
   const searchParams = new URLSearchParams({
     key: apiKey,
     part: "snippet",
     q: query,
     type: "video",
-    maxResults: String(Math.max(limit, 5)),
+    maxResults: String(normalizedLimit),
+    videoDuration: toYoutubeDurationParam(preferredDuration),
     safeSearch: "none"
   });
 
@@ -90,7 +134,7 @@ export async function searchYoutubeVideos(query, limit = 12) {
   const videoIds = searchResult.items
     .map((item) => item.id?.videoId)
     .filter(Boolean)
-    .slice(0, limit);
+    .slice(0, normalizedLimit);
 
   if (!videoIds.length) {
     return [];
@@ -112,22 +156,30 @@ export async function searchYoutubeVideos(query, limit = 12) {
     return [];
   }
 
-  return detailsResult.items.map((video) => ({
-    videoId: video.id,
-    title: video.snippet?.title || "Untitled",
-    url: `https://www.youtube.com/watch?v=${video.id}`,
-    embedUrl: `https://www.youtube.com/embed/${video.id}`,
-    thumbnailUrl:
-      video.snippet?.thumbnails?.high?.url ||
-      video.snippet?.thumbnails?.medium?.url ||
-      video.snippet?.thumbnails?.default?.url ||
-      "",
-    duration: formatIso8601Duration(video.contentDetails?.duration),
-    views: formatViewCount(video.statistics?.viewCount),
-    author: video.snippet?.channelTitle || "Unknown",
-    publishedAt: video.snippet?.publishedAt || "Unknown",
-    summary: normalizeDescription(video.snippet?.description)
-  }));
+  const normalizedVideos = detailsResult.items.map((video) => {
+    const durationSeconds = parseIso8601DurationToSeconds(video.contentDetails?.duration);
+    return {
+      videoId: video.id,
+      title: video.snippet?.title || "Untitled",
+      url: `https://www.youtube.com/watch?v=${video.id}`,
+      embedUrl: `https://www.youtube.com/embed/${video.id}`,
+      thumbnailUrl:
+        video.snippet?.thumbnails?.high?.url ||
+        video.snippet?.thumbnails?.medium?.url ||
+        video.snippet?.thumbnails?.default?.url ||
+        "",
+      duration: formatIso8601Duration(video.contentDetails?.duration),
+      durationSeconds,
+      views: formatViewCount(video.statistics?.viewCount),
+      author: video.snippet?.channelTitle || "Unknown",
+      publishedAt: video.snippet?.publishedAt || "Unknown",
+      summary: normalizeDescription(video.snippet?.description)
+    };
+  });
+
+  return normalizedVideos.filter((video) =>
+    isVideoDurationMatch(preferredDuration, video.durationSeconds)
+  );
 }
 
 export async function fetchTranscriptForVideo(videoId) {

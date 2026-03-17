@@ -157,7 +157,7 @@ function App() {
 
     try {
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 12000)
+      const timeoutId = setTimeout(() => controller.abort(), 25000)
 
       const result = await fetch(`${API_BASE}/api/recommendations`, {
         method: 'POST',
@@ -177,7 +177,8 @@ function App() {
       const data = await result.json()
 
       if (!result.ok) {
-        throw new Error(data.message || 'Could not fetch recommendations.')
+        const detailedMessage = [data?.message, data?.error].filter(Boolean).join(' | ')
+        throw new Error(detailedMessage || 'Could not fetch recommendations.')
       }
 
       setResponse(data)

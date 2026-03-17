@@ -133,6 +133,20 @@ export function calculateMatchScore({
   transcriptText,
   query
 }) {
+  return calculateMatchBreakdown({
+    studentAbilityScore,
+    difficultyScore,
+    transcriptText,
+    query
+  }).finalScore;
+}
+
+export function calculateMatchBreakdown({
+  studentAbilityScore,
+  difficultyScore,
+  transcriptText,
+  query
+}) {
   const target = mapAbilityToTargetDifficulty(studentAbilityScore);
   const closeness = Math.max(0, 1 - Math.abs(target - difficultyScore) / 10);
 
@@ -150,6 +164,12 @@ export function calculateMatchScore({
     ? queryHits / queryTokens.length
     : 0.5;
 
-  const finalScore = closeness * 0.65 + semanticFit * 0.35;
-  return Number((finalScore * 100).toFixed(1));
+  const finalScore = Number(((closeness * 0.65 + semanticFit * 0.35) * 100).toFixed(1));
+
+  return {
+    targetDifficulty: Number(target.toFixed(2)),
+    closenessScore: Number((closeness * 100).toFixed(1)),
+    semanticScore: Number((semanticFit * 100).toFixed(1)),
+    finalScore
+  };
 }
