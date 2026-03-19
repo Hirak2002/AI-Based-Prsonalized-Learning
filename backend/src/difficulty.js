@@ -1,24 +1,3 @@
-const EASY_WORDS = [
-  "introduction",
-  "basics",
-  "beginner",
-  "simple",
-  "overview",
-  "fundamental"
-];
-
-const HARD_WORDS = [
-  "optimization",
-  "architecture",
-  "asymptotic",
-  "abstraction",
-  "distributed",
-  "concurrency",
-  "probability",
-  "advanced",
-  "theorem"
-];
-
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -77,21 +56,6 @@ function estimateReadability(text) {
   };
 }
 
-function keywordComplexityBoost(text) {
-  const normalized = text.toLowerCase();
-  let boost = 0;
-
-  for (const word of EASY_WORDS) {
-    if (normalized.includes(word)) boost -= 0.4;
-  }
-
-  for (const word of HARD_WORDS) {
-    if (normalized.includes(word)) boost += 0.7;
-  }
-
-  return boost;
-}
-
 function quantile(sortedValues, q) {
   if (!sortedValues.length) return 0;
   const position = (sortedValues.length - 1) * q;
@@ -108,6 +72,25 @@ function scoreByThresholdBand(rawScore, beginnerUpper, advancedLower) {
   const safeBand = Math.max(advancedLower - beginnerUpper, 8);
   const relative = (rawScore - beginnerUpper) / safeBand;
   return clamp(1 + relative * 9, 1, 10);
+}
+
+function calculateMean(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function calculateStdDev(values, mean) {
+  if (!values.length) return 0;
+  const variance =
+    values.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+    values.length;
+  return Math.sqrt(variance);
+}
+
+function percentileRank(values, target) {
+  if (!values.length) return 50;
+  const belowOrEqual = values.filter((value) => value <= target).length;
+  return (belowOrEqual / values.length) * 100;
 }
 
 export function calculateStudentAbilityScore(iq, eq) {
@@ -153,16 +136,46 @@ export function calculateDynamicCohortThresholds({
     .filter((value) => Number.isFinite(value))
     .sort((a, b) => a - b);
 
-  const cognitive = calculateIqEqDifficulty(iq, eq);
-  const cognitiveIndex = cognitive.score / 10;
+  const cohortScoreMean = values.length ? calculateMean(values) : 45;
+  const cohortScoreStd = values.length ? calculateStdDev(values, cohortScoreMean) : 12;
+  const entropyFactor = clamp(
+    cohortScoreMean > 0 ? cohortScoreStd / cohortScoreMean : 0,
+    0,
+    0.95
+  );
+
+  // Baseline psychometric cohort references when no class-level IQ/EQ history is available.
+  const cohortMeanIq = 100;
+  const cohortSdIq = 15;
+  const cohortMeanEq = 100;
+  const cohortSdEq = 15;
+
+  const iqNorm = (iq - cohortMeanIq) / cohortSdIq;
+  const eqNorm = (eq - cohortMeanEq) / cohortSdEq;
+  const cognitiveFit = ((iqNorm * 0.6 + eqNorm * 0.4) / 2);
+
+  const abilityScore = calculateStudentAbilityScore(iq, eq);
+  const userCognitiveScore = clamp(((abilityScore - 50) / 130) * 100, 0, 100);
+  const percentile = percentileRank(values, userCognitiveScore);
+  const dcrt = clamp((percentile / 100) * (1 - entropyFactor), 0, 1);
 
   if (!values.length) {
+    const beginnerUpperFallback = 30;
+    const advancedLowerFallback = 60;
+
     return {
-      beginnerUpper: 30,
-      advancedLower: 60,
+      beginnerUpper: beginnerUpperFallback,
+      advancedLower: advancedLowerFallback,
       cohortMedian: 45,
       cohortIqr: 20,
-      cognitiveShift: Number(((cognitiveIndex - 0.5) * 12).toFixed(2))
+      dcrt: Number(dcrt.toFixed(4)),
+      entropyFactor: Number(entropyFactor.toFixed(4)),
+      cognitiveFit: Number(cognitiveFit.toFixed(4)),
+      iqNorm: Number(iqNorm.toFixed(4)),
+      eqNorm: Number(eqNorm.toFixed(4)),
+      userCognitiveScore: Number(userCognitiveScore.toFixed(2)),
+      cohortMeanScore: Number(cohortScoreMean.toFixed(2)),
+      cohortStdScore: Number(cohortScoreStd.toFixed(2))
     };
   }
 
@@ -171,11 +184,11 @@ export function calculateDynamicCohortThresholds({
   const q3 = quantile(values, 0.75);
   const iqr = Math.max(1, q3 - q1);
 
-  const spread = clamp(iqr * 0.65, 6, 18);
-  const cognitiveShift = (cognitiveIndex - 0.5) * 12;
+  const spread = clamp(iqr * 0.75, 8, 20);
+  const adaptiveShift = clamp(dcrt * cognitiveFit * 20, -10, 10);
 
-  let beginnerUpper = clamp(median - spread + cognitiveShift, 12, 55);
-  let advancedLower = clamp(median + spread + cognitiveShift, 40, 88);
+  let beginnerUpper = clamp(median - spread + adaptiveShift, 12, 55);
+  let advancedLower = clamp(median + spread + adaptiveShift, 40, 88);
 
   if (advancedLower - beginnerUpper < 14) {
     const center = (advancedLower + beginnerUpper) / 2;
@@ -188,16 +201,26 @@ export function calculateDynamicCohortThresholds({
     advancedLower: Number(advancedLower.toFixed(2)),
     cohortMedian: Number(median.toFixed(2)),
     cohortIqr: Number(iqr.toFixed(2)),
-    cognitiveShift: Number(cognitiveShift.toFixed(2))
+    dcrt: Number(dcrt.toFixed(4)),
+    entropyFactor: Number(entropyFactor.toFixed(4)),
+    cognitiveFit: Number(cognitiveFit.toFixed(4)),
+    iqNorm: Number(iqNorm.toFixed(4)),
+    eqNorm: Number(eqNorm.toFixed(4)),
+    userCognitiveScore: Number(userCognitiveScore.toFixed(2)),
+    cohortMeanScore: Number(cohortScoreMean.toFixed(2)),
+    cohortStdScore: Number(cohortScoreStd.toFixed(2)),
+    adaptiveShift: Number(adaptiveShift.toFixed(2))
   };
 }
 
 export function applyDynamicDifficultyProfile(difficulty, thresholds) {
-  const rawScore = clamp(
-    Number(difficulty?.baseScore ?? difficulty?.rawScore ?? 45),
-    0,
-    100
-  );
+  const fre = clamp(Number(difficulty?.fleschReadingEase ?? 60), 0, 100);
+  const dcrt = clamp(Number(thresholds?.dcrt ?? 0), 0, 1);
+  const cognitiveFit = Number(thresholds?.cognitiveFit ?? 0);
+  const adaptationFactor = Math.max(0.2, 1 + dcrt * cognitiveFit);
+  const cadsRaw = (100 - fre) * adaptationFactor;
+  const rawScore = clamp(Number(cadsRaw), 0, 140);
+
   const beginnerUpper = Number(thresholds?.beginnerUpper ?? 30);
   const advancedLower = Number(thresholds?.advancedLower ?? 60);
 
@@ -212,9 +235,13 @@ export function applyDynamicDifficultyProfile(difficulty, thresholds) {
     score: Number(score.toFixed(2)),
     label,
     rawScore: Number(rawScore.toFixed(2)),
+    cadsRaw: Number(cadsRaw.toFixed(2)),
+    adaptationFactor: Number(adaptationFactor.toFixed(4)),
     thresholds: {
       beginnerUpper,
-      advancedLower
+      advancedLower,
+      dcrt: Number(dcrt.toFixed(4)),
+      cognitiveFit: Number(cognitiveFit.toFixed(4))
     }
   };
 }
@@ -231,11 +258,7 @@ export function classifyDifficulty(transcriptText) {
   const readability = estimateReadability(transcriptText);
   const normalizedFlesch = clamp(readability.fleschReadingEase, 0, 100);
   const fleschDifficulty = 100 - normalizedFlesch;
-  const lexicalSignal =
-    keywordComplexityBoost(transcriptText) * 6 +
-    readability.difficultWordRatio * 18 +
-    (readability.grade - 8) * 1.2;
-  const baseScore = clamp(fleschDifficulty + lexicalSignal, 0, 100);
+  const baseScore = clamp(fleschDifficulty, 0, 100);
 
   let label = "Intermediate";
   if (baseScore < 30) label = "Beginner";

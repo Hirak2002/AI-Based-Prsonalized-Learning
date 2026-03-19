@@ -143,9 +143,9 @@ export async function runRecommendationPipeline({
     },
     flowchart: {
       difficultyMethod:
-        "Cognitive-adaptive Flesch difficulty with dynamic cohort reference thresholds",
+        "CADS: (100 - FRE) * (1 + DCRT * CognitiveFit)",
       iqEqDifficultyMethod:
-        "IQ/EQ Difficulty = weighted normalized IQ+EQ with balance penalty",
+        "CognitiveFit from normalized IQ/EQ with w_iq=0.6 and w_eq=0.4",
       matchingRule: "Pipeline ranking: Ability-Difficulty Alignment + Semantic Match"
     },
     difficultyModel: {
