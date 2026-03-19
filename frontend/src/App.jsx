@@ -242,6 +242,14 @@ function App() {
                 <span className="diff-label">Assessment Progress</span>
                 <strong>{answeredQuestions}/{assessment.questions.length || 0}</strong>
               </div>
+              <div>
+                <span className="diff-label">Adaptive Band</span>
+                <strong>
+                  {response?.difficultyModel?.thresholds
+                    ? `${response.difficultyModel.thresholds.beginnerUpper} - ${response.difficultyModel.thresholds.advancedLower}`
+                    : '--'}
+                </strong>
+              </div>
             </div>
           </div>
         </header>
@@ -359,7 +367,11 @@ function App() {
                 Query: <strong>{response.searchQuery}</strong> | Transcript analyzed:{' '}
                 <strong>{response.analyzedWithTranscript}</strong> | Ability Score:{' '}
                 <strong>{response.student.abilityScore}</strong> | IQ/EQ:{' '}
-                <strong>{response.student.iq}/{response.student.eq}</strong> | Assessment:{' '}
+                <strong>{response.student.iq}/{response.student.eq}</strong> | IQ/EQ Difficulty:{' '}
+                <strong>
+                  {response.student.iqEqDifficulty?.score}/10 ({response.student.iqEqDifficulty?.label})
+                </strong>{' '}
+                | Assessment:{' '}
                 <strong>{response.student.assessment?.answeredCount || 0}/{response.student.assessment?.totalQuestions || 0}</strong>
               </p>
             ) : (

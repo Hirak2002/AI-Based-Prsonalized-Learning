@@ -1,4 +1,7 @@
 import {
+  applyDynamicDifficultyProfile,
+  calculateIqEqDifficulty,
+  calculateDynamicCohortThresholds,
   calculateMatchBreakdown,
   calculateStudentAbilityScore,
   classifyDifficulty
@@ -63,6 +66,7 @@ export async function runRecommendationPipeline({
   const iq = assessment.iqScore;
   const eq = assessment.eqScore;
   const studentAbilityScore = calculateStudentAbilityScore(iq, eq);
+  const iqEqDifficulty = calculateIqEqDifficulty(iq, eq);
 
   const query = buildSearchQuery({ topic, learningGoal, currentLevel });
   const candidates = await searchYoutubeVideos(query, {
@@ -77,31 +81,49 @@ export async function runRecommendationPipeline({
       if (!analysisText) return null;
 
       const difficulty = classifyDifficulty(analysisText);
-      const score = calculateMatchBreakdown({
-        studentAbilityScore,
-        difficultyScore: difficulty.score,
-        transcriptText: analysisText,
-        query
-      });
 
       return {
         ...video,
+        analysisText,
         transcriptSnippet: analysisText.slice(0, 240) + "...",
         analysisSource: transcript ? "transcript" : "metadata-fallback",
-        difficulty,
-        matchScore: score.finalScore,
-        scoreBreakdown: score
+        difficulty
       };
     })
   );
 
-  const analyzed = analyzedRaw
+  const analyzedBase = analyzedRaw
     .filter(Boolean)
     .filter((item) => isVideoDurationMatch(preferredDuration, item.durationSeconds));
+
+  const cohortThresholds = calculateDynamicCohortThresholds({
+    rawScores: analyzedBase.map((item) => item.difficulty.baseScore),
+    iq,
+    eq
+  });
+
+  const analyzed = analyzedBase.map((item) => {
+    const difficulty = applyDynamicDifficultyProfile(item.difficulty, cohortThresholds);
+    const score = calculateMatchBreakdown({
+      studentAbilityScore,
+      difficultyScore: difficulty.score,
+      transcriptText: item.analysisText,
+      query
+    });
+
+    return {
+      ...item,
+      difficulty,
+      matchScore: score.finalScore,
+      scoreBreakdown: score
+    };
+  });
 
   const recommendations = analyzed
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, RECOMMENDATION_LIMIT);
+
+  const cleanedRecommendations = recommendations.map(({ analysisText, ...video }) => video);
 
   return {
     youtubeApiConfigured: true,
@@ -112,6 +134,7 @@ export async function runRecommendationPipeline({
       iq,
       eq,
       abilityScore: studentAbilityScore,
+      iqEqDifficulty,
       abilityFormula: "0.7 * IQ + 0.3 * EQ",
       assessment,
       topic,
@@ -119,12 +142,19 @@ export async function runRecommendationPipeline({
       learningGoal
     },
     flowchart: {
-      difficultyMethod: "NLP Difficulty Analysis (Readability + keyword semantics)",
+      difficultyMethod:
+        "Cognitive-adaptive Flesch difficulty with dynamic cohort reference thresholds",
+      iqEqDifficultyMethod:
+        "IQ/EQ Difficulty = weighted normalized IQ+EQ with balance penalty",
       matchingRule: "Pipeline ranking: Ability-Difficulty Alignment + Semantic Match"
+    },
+    difficultyModel: {
+      name: "flesch-cohort-cognitive-adaptive",
+      thresholds: cohortThresholds
     },
     searchQuery: query,
     totalCandidates: candidates.length,
     analyzedWithTranscript: analyzed.length,
-    recommendations
+    recommendations: cleanedRecommendations
   };
 }
